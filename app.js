@@ -92,8 +92,10 @@ class CRMDatabase {
     if (!localStorage.getItem("medtrack_referrals")) {
       localStorage.setItem("medtrack_referrals", JSON.stringify([]));
     }
-    if (!localStorage.getItem("medtrack_sync_url")) {
-      localStorage.setItem("medtrack_sync_url", "");
+    const DEFAULT_SYNC_URL = "https://script.google.com/macros/s/AKfycbx1H5HQDxibfrffqVuM3xj5vUXYU1aP4EOe5Sfjk0D2jIUfeydfK0XmCUGbQ-hx98-1/exec"; // Paste your Google Apps Script Web App URL here for automatic setup!
+    const currentUrl = localStorage.getItem("medtrack_sync_url");
+    if (DEFAULT_SYNC_URL && currentUrl !== DEFAULT_SYNC_URL) {
+      localStorage.setItem("medtrack_sync_url", DEFAULT_SYNC_URL);
     }
     if (!localStorage.getItem("medtrack_last_sync")) {
       localStorage.setItem("medtrack_last_sync", "Never");
@@ -541,7 +543,10 @@ function checkSession() {
 function initView(hash) {
   switch (hash) {
     case "#/login":
-      resetPinDisplay();
+      // Only reset pin display if currentPinInput is empty to avoid clearing user's keystrokes
+      if (currentPinInput === "") {
+        resetPinDisplay();
+      }
       break;
     case "#/dashboard":
       renderDashboard();
@@ -580,8 +585,10 @@ function handlePinKey(key) {
     
     if (matchedUser) {
       localStorage.setItem("medtrack_session", JSON.stringify(matchedUser));
+      currentUser = matchedUser; // Set immediately
       showToast(`Welcome back, ${matchedUser.name}!`, "success");
       currentPinInput = "";
+      triggerSync(true); // Trigger sync immediately to load history!
       setTimeout(() => {
         window.location.hash = "#/dashboard";
       }, 500);
@@ -589,6 +596,9 @@ function handlePinKey(key) {
       const errEl = document.getElementById("authError");
       errEl.classList.add("show");
       currentPinInput = "";
+      if (navigator.onLine && db.getSyncSettings().url) {
+        triggerSync(true); // Pull latest user DB / PIN changes from server
+      }
       setTimeout(() => {
         errEl.classList.remove("show");
         updatePinDots();
@@ -688,6 +698,12 @@ function renderDashboard() {
   const leads = db.getLeads();
   const meetings = db.getMeetings();
   const referrals = db.getReferrals();
+
+  // Show user greeting on dashboard
+  const subtitleEl = document.getElementById("dashboardSubtitle");
+  if (subtitleEl && currentUser) {
+    subtitleEl.innerHTML = `Welcome back, <strong>${currentUser.name}</strong> (${currentUser.role}) &bull; Referral Performance & Conversion Metrics`;
+  }
 
   // Populate dropdown once
   const repSelect = document.getElementById("dashboardRepFilter");
@@ -1498,6 +1514,7 @@ function submitLeadForm(e) {
   db.saveLead(leadData);
   showToast(selectedLead ? "Lead details updated!" : "New referral lead added successfully!", "success");
   closeSheet("leadFormSheet");
+  triggerSync(true); // Sync lead creation/update immediately
   renderLeadsList();
   renderDashboard();
 }
@@ -1821,6 +1838,7 @@ function archiveSelectedLead() {
       db.set("leads", leads);
       showToast("Lead archived successfully", "info");
       closeSheet("leadFormSheet");
+      triggerSync(true); // Sync archive immediately
       renderLeadsList();
       renderDashboard();
     }
@@ -2459,7 +2477,10 @@ function renderAdminUsers() {
         </span>
       </td>
       <td>
-        <button class="action-icon-btn delete" onclick="deleteUser(${idx})">
+        <button class="action-icon-btn" onclick="editUserPin(${idx})" title="Edit PIN" style="margin-right: 6px; color: var(--primary); background: none; border: none; cursor: pointer;">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle;"><path d="M12 20h9"></path><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>
+        </button>
+        <button class="action-icon-btn delete" onclick="deleteUser(${idx})" title="Delete User">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
         </button>
       </td>
@@ -2514,6 +2535,23 @@ function deleteUser(idx) {
     renderAdminUsers();
     triggerSync(true, true);
   }
+}
+
+function editUserPin(idx) {
+  const users = db.getUsers();
+  const user = users[idx];
+  const newPin = prompt(`Enter new 4-digit PIN for ${user.name}:`, user.pin);
+  if (newPin === null) return; // Cancelled
+  const trimmed = newPin.trim();
+  if (trimmed.length !== 4 || isNaN(trimmed)) {
+    showToast("Invalid PIN. Must be exactly 4 digits.", "error");
+    return;
+  }
+  user.pin = trimmed;
+  db.saveUsers(users);
+  showToast(`PIN updated for ${user.name}`, "success");
+  renderAdminUsers();
+  triggerSync(true, true);
 }
 
 // 2. Inline Options Management Helpers
@@ -3457,7 +3495,7 @@ function isUserBusy() {
 }
 
 function attemptAutoSync() {
-  if (currentUser && navigator.onLine && db.getSyncSettings().url && !isUserBusy()) {
+  if (navigator.onLine && db.getSyncSettings().url && !isUserBusy()) {
     console.log("[Auto-Sync] Triggering background synchronization...");
     triggerSync(true);
   }
@@ -3465,7 +3503,7 @@ function attemptAutoSync() {
 
 let focusSyncTimeout = null;
 function triggerFocusSync() {
-  if (currentUser && navigator.onLine && db.getSyncSettings().url && !isUserBusy()) {
+  if (navigator.onLine && db.getSyncSettings().url && !isUserBusy()) {
     clearTimeout(focusSyncTimeout);
     focusSyncTimeout = setTimeout(() => {
       console.log("[Focus Sync] Triggering background synchronization...");
