@@ -223,6 +223,24 @@ class CRMDatabase {
   getConfig() { return JSON.parse(localStorage.getItem("medtrack_config")) || DEFAULT_CONFIG; }
   saveConfig(config) { localStorage.setItem("medtrack_config", JSON.stringify(config)); }
 
+  getCustomReports() {
+    const config = this.getConfig();
+    const rawReports = config.customReports || [];
+    return rawReports.map(r => {
+      try {
+        return typeof r === 'string' ? JSON.parse(r) : r;
+      } catch (e) {
+        console.error("Error parsing custom report", e);
+        return null;
+      }
+    }).filter(r => r !== null);
+  }
+  saveCustomReports(reports) {
+    const config = this.getConfig();
+    config.customReports = reports.map(r => typeof r === 'string' ? r : JSON.stringify(r));
+    this.saveConfig(config);
+  }
+
   getFormFields() { return this.get("form_fields"); }
   saveFormFields(fields) { this.set("form_fields", fields); }
 
@@ -814,6 +832,9 @@ function renderDashboard() {
       });
     }
   }
+
+  // Render dynamic custom reports
+  renderCustomReports();
 }
 
 function renderFunnelChart(filteredLeads) {
@@ -2463,6 +2484,8 @@ function renderAdminPanel() {
 
   if (activeAdminTab === "users") {
     renderAdminUsers();
+  } else if (activeAdminTab === "reports") {
+    renderAdminReports();
   } else if (activeAdminTab === "forms") {
     renderAdminForms();
   } else if (activeAdminTab === "sharing") {
@@ -3658,6 +3681,426 @@ function triggerFocusSync() {
     }, 1000);
   }
 }
+
+// ================= CUSTOM REPORTS BUILDER ENGINE =================
+
+function getGroupByFields(dataset) {
+  const fields = [];
+  if (dataset === "leads") {
+    fields.push({ id: "organisation", label: "Hospital / Clinic Organisation" });
+    fields.push({ id: "audienceType", label: "Audience Type" });
+    fields.push({ id: "owner", label: "Representative Owner" });
+    fields.push({ id: "status", label: "Referral Status" });
+    fields.push({ id: "nonConversionReason", label: "Reason for Non-Conversion" });
+  } else if (dataset === "meetings") {
+    fields.push({ id: "leadId", label: "Hospital / Clinic Organisation" });
+    fields.push({ id: "purpose", label: "Meeting Purpose" });
+    fields.push({ id: "outcome", label: "Outcome Status" });
+    fields.push({ id: "owner", label: "Representative Owner" });
+  } else if (dataset === "referrals") {
+    fields.push({ id: "leadId", label: "Hospital / Clinic Organisation" });
+    fields.push({ id: "reached", label: "Reached Status" });
+    fields.push({ id: "owner", label: "Representative Owner" });
+  }
+
+  // Add custom fields for this target
+  const target = dataset === "leads" ? "lead" : (dataset === "meetings" ? "meeting" : "referral");
+  const customFields = db.getFormFields().filter(f => f.target === target && f.active);
+  customFields.forEach(f => {
+    fields.push({ id: f.id, label: f.label + " (Custom)" });
+  });
+
+  return fields;
+}
+
+function getMetricFields(dataset) {
+  const fields = [];
+  if (dataset === "leads") {
+    fields.push({ id: "revenuePotential", label: "Est. Revenue Value (₹)" });
+  }
+
+  const target = dataset === "leads" ? "lead" : (dataset === "meetings" ? "meeting" : "referral");
+  const customFields = db.getFormFields().filter(f => f.target === target && f.active && f.type === "number");
+  customFields.forEach(f => {
+    fields.push({ id: f.id, label: f.label + " (Custom)" });
+  });
+
+  return fields;
+}
+
+function calculateReportData(report) {
+  let dataset = [];
+  if (report.dataset === "leads") {
+    dataset = db.getLeads();
+  } else if (report.dataset === "meetings") {
+    dataset = db.getMeetings();
+  } else if (report.dataset === "referrals") {
+    dataset = db.getReferrals();
+  }
+
+  // Filter based on active representative filters if selected in dashboard dropdown
+  const repSelect = document.getElementById("dashboardRepFilter");
+  let selectedRep = "All";
+  if (repSelect) {
+    selectedRep = repSelect.value || "All";
+  }
+  if (currentUser && currentUser.role === "Rep") {
+    selectedRep = currentUser.id;
+  }
+  if (selectedRep !== "All") {
+    dataset = dataset.filter(item => item.owner === selectedRep);
+  }
+
+  // Also apply date filters based on dashboard timeframe selection
+  dataset = dataset.filter(item => {
+    const itemDate = item.createdAt || item.date || item.visitDate;
+    return matchDashboardTimeframe(itemDate);
+  });
+
+  // Grouping
+  const groups = {};
+  dataset.forEach(item => {
+    let groupKey = item[report.groupBy];
+    if (groupKey === undefined && item.customFields) {
+      groupKey = item.customFields[report.groupBy];
+    }
+    
+    // Resolve leadId grouping key to actual organization name
+    if (report.groupBy === "leadId") {
+      const lead = db.getLeads().find(l => l.leadId === groupKey);
+      groupKey = lead ? lead.organisation : (groupKey || "Unknown Lead");
+    }
+
+    // Resolve owner ID grouping key to user display name
+    if (report.groupBy === "owner") {
+      groupKey = getUserDisplayName(groupKey);
+    }
+
+    if (groupKey === undefined || groupKey === null || groupKey === "") {
+      groupKey = "Not Specified";
+    }
+
+    if (!groups[groupKey]) {
+      groups[groupKey] = [];
+    }
+    groups[groupKey].push(item);
+  });
+
+  // Numeric extraction helper
+  const getNumericValue = (item, fieldId) => {
+    let val = item[fieldId];
+    if (val === undefined && item.customFields) {
+      val = item.customFields[fieldId];
+    }
+    if (val === undefined || val === null || val === "") {
+      return 0;
+    }
+    const cleanVal = String(val).replace(/[^\d.-]/g, "");
+    const parsed = parseFloat(cleanVal);
+    return isNaN(parsed) ? 0 : parsed;
+  };
+
+  const results = [];
+  for (const [key, items] of Object.entries(groups)) {
+    let val = 0;
+    if (report.metricType === "count") {
+      val = items.length;
+    } else {
+      let total = 0;
+      items.forEach(item => {
+        total += getNumericValue(item, report.calcField);
+      });
+      if (report.metricType === "sum") {
+        val = total;
+      } else if (report.metricType === "avg") {
+        val = items.length > 0 ? (total / items.length) : 0;
+      }
+    }
+    results.push({ group: key, value: val });
+  }
+
+  results.sort((a, b) => b.value - a.value);
+  return results;
+}
+
+function renderCustomReports() {
+  const container = document.getElementById("customReportsDashboardContainer");
+  if (!container) return;
+
+  const reports = db.getCustomReports();
+  if (reports.length === 0) {
+    container.style.display = "none";
+    container.innerHTML = "";
+    return;
+  }
+
+  container.style.display = "block";
+  container.innerHTML = "";
+
+  reports.forEach(report => {
+    const data = calculateReportData(report);
+    
+    // Resolve Group By Label
+    const groupByFields = getGroupByFields(report.dataset);
+    const matchedGroupBy = groupByFields.find(f => f.id === report.groupBy);
+    const groupByLabel = matchedGroupBy ? matchedGroupBy.label : "Group Field";
+
+    // Resolve Metric Label
+    let metricLabel = "";
+    if (report.metricType === "count") {
+      metricLabel = "Record Count";
+    } else {
+      const metricFields = getMetricFields(report.dataset);
+      const matchedMetric = metricFields.find(f => f.id === report.calcField);
+      const metricName = matchedMetric ? matchedMetric.label : "Metric Field";
+      metricLabel = report.metricType === "sum" ? `Total ${metricName}` : `Avg ${metricName}`;
+    }
+
+    const reportCard = document.createElement("div");
+    reportCard.className = "chart-card glass";
+    reportCard.style.marginTop = "20px";
+
+    const header = document.createElement("div");
+    header.className = "chart-header";
+    header.innerHTML = `
+      <span>${report.title}</span>
+      <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 500;">
+        ${report.dataset.toUpperCase()} &bull; ${report.metricType.toUpperCase()}
+      </span>
+    `;
+    reportCard.appendChild(header);
+
+    const tableWrapper = document.createElement("div");
+    tableWrapper.className = "admin-table-wrapper";
+
+    if (data.length === 0) {
+      tableWrapper.innerHTML = `
+        <div style="padding: 20px; text-align: center; color: var(--text-muted); font-size: 0.85rem;">
+          No matching records found for this report.
+        </div>
+      `;
+    } else {
+      const table = document.createElement("table");
+      table.className = "admin-table";
+      
+      const thead = document.createElement("thead");
+      thead.innerHTML = `
+        <tr>
+          <th>${groupByLabel}</th>
+          <th style="text-align: right;">${metricLabel}</th>
+        </tr>
+      `;
+      table.appendChild(thead);
+
+      const tbody = document.createElement("tbody");
+      
+      const formatValue = (val) => {
+        const isCurrency = report.calcField === "revenuePotential" || report.calcField === "leadRevenue" || (report.title && report.title.toLowerCase().includes("revenue")) || (report.title && report.title.toLowerCase().includes("value"));
+        if (isCurrency) {
+          return `₹${val.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+        }
+        return val.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+      };
+
+      data.forEach(row => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td style="font-weight: 600; color: var(--primary);">${row.group}</td>
+          <td style="text-align: right; font-weight: 700;">${formatValue(row.value)}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      tableWrapper.appendChild(table);
+    }
+
+    reportCard.appendChild(tableWrapper);
+    container.appendChild(reportCard);
+  });
+}
+
+function handleReportDatasetChange() {
+  const datasetSelect = document.getElementById("reportDataset");
+  if (!datasetSelect) return;
+
+  const dataset = datasetSelect.value;
+  const groupBySelect = document.getElementById("reportGroupBy");
+  const calcFieldSelect = document.getElementById("reportCalcField");
+
+  // Populate Group By fields
+  groupBySelect.innerHTML = "";
+  const groupByFields = getGroupByFields(dataset);
+  groupByFields.forEach(f => {
+    const opt = document.createElement("option");
+    opt.value = f.id;
+    opt.innerText = f.label;
+    groupBySelect.appendChild(opt);
+  });
+
+  // Populate Calc fields
+  calcFieldSelect.innerHTML = "";
+  const metricFields = getMetricFields(dataset);
+  metricFields.forEach(f => {
+    const opt = document.createElement("option");
+    opt.value = f.id;
+    opt.innerText = f.label;
+    calcFieldSelect.appendChild(opt);
+  });
+
+  handleReportMetricTypeChange();
+}
+
+function handleReportMetricTypeChange() {
+  const metricTypeSelect = document.getElementById("reportMetricType");
+  const calcFieldGroup = document.getElementById("reportCalcFieldGroup");
+  const calcFieldSelect = document.getElementById("reportCalcField");
+
+  if (!metricTypeSelect) return;
+
+  const metricType = metricTypeSelect.value;
+  if (metricType === "sum" || metricType === "avg") {
+    calcFieldGroup.style.display = "block";
+    calcFieldSelect.setAttribute("required", "required");
+  } else {
+    calcFieldGroup.style.display = "none";
+    calcFieldSelect.removeAttribute("required");
+  }
+}
+
+function renderAdminReports() {
+  const tbody = document.getElementById("adminReportsTableBody");
+  if (!tbody) return;
+  tbody.innerHTML = "";
+
+  const reports = db.getCustomReports();
+
+  // Make sure current dataset fields are populated
+  const datasetSelect = document.getElementById("reportDataset");
+  if (datasetSelect && document.getElementById("reportGroupBy").children.length === 0) {
+    handleReportDatasetChange();
+  }
+
+  reports.forEach((report, idx) => {
+    const tr = document.createElement("tr");
+    
+    // Format groupBy label
+    const groupByFields = getGroupByFields(report.dataset);
+    const matchedGroupBy = groupByFields.find(f => f.id === report.groupBy);
+    const groupByLabel = matchedGroupBy ? matchedGroupBy.label : report.groupBy;
+
+    // Format metric label
+    let metricLabel = "";
+    if (report.metricType === "count") {
+      metricLabel = "Count of records";
+    } else {
+      const metricFields = getMetricFields(report.dataset);
+      const matchedMetric = metricFields.find(f => f.id === report.calcField);
+      const metricName = matchedMetric ? matchedMetric.label : report.calcField;
+      metricLabel = report.metricType === "sum" ? `Sum of ${metricName}` : `Avg of ${metricName}`;
+    }
+
+    tr.innerHTML = `
+      <td style="font-weight: 600; color: var(--primary);">${report.title}</td>
+      <td style="text-transform: capitalize;">${report.dataset}</td>
+      <td>${groupByLabel}</td>
+      <td>${metricLabel}</td>
+      <td style="text-align: center;">
+        <button type="button" class="action-icon-btn" onclick="editCustomReport(${idx})" title="Edit Report" style="margin-right: 6px; color: var(--primary); background: none; border: none; cursor: pointer;">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle;"><path d="M12 20h9"></path><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>
+        </button>
+        <button type="button" class="action-icon-btn delete" onclick="deleteCustomReport(${idx})" title="Delete Report" style="color: var(--danger); background: none; border: none; cursor: pointer;">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle;"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+        </button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+function saveCustomReport(e) {
+  e.preventDefault();
+  
+  const title = document.getElementById("reportTitle").value.trim();
+  const dataset = document.getElementById("reportDataset").value;
+  const groupBy = document.getElementById("reportGroupBy").value;
+  const metricType = document.getElementById("reportMetricType").value;
+  const calcField = document.getElementById("reportCalcField").value;
+  const editIndexVal = document.getElementById("editReportIndex").value;
+
+  if (!title) {
+    showToast("Report title is required", "error");
+    return;
+  }
+
+  const reports = db.getCustomReports();
+  const newReport = { title, dataset, groupBy, metricType, calcField };
+
+  if (editIndexVal !== "") {
+    const idx = parseInt(editIndexVal);
+    reports[idx] = newReport;
+    showToast("Custom report updated", "success");
+  } else {
+    reports.push(newReport);
+    showToast("Custom report created", "success");
+  }
+
+  db.saveCustomReports(reports);
+  cancelReportEdit();
+  renderAdminReports();
+  triggerSync(true); // Bidirectional cloud sync
+}
+
+function editCustomReport(idx) {
+  const reports = db.getCustomReports();
+  const report = reports[idx];
+  if (!report) return;
+
+  document.getElementById("reportTitle").value = report.title;
+  document.getElementById("reportDataset").value = report.dataset;
+  
+  // Populate dropdowns for this dataset
+  handleReportDatasetChange();
+
+  document.getElementById("reportGroupBy").value = report.groupBy;
+  document.getElementById("reportMetricType").value = report.metricType;
+  
+  // Update metric type fields visibility
+  handleReportMetricTypeChange();
+
+  if (report.metricType === "sum" || report.metricType === "avg") {
+    document.getElementById("reportCalcField").value = report.calcField;
+  }
+
+  document.getElementById("editReportIndex").value = idx;
+  document.getElementById("reportFormTitle").innerText = "Edit Custom Report";
+  document.getElementById("cancelReportBtn").style.display = "inline-block";
+  
+  // Scroll to top of report builder form
+  document.getElementById("customReportForm").scrollIntoView({ behavior: "smooth" });
+}
+
+function deleteCustomReport(idx) {
+  if (!confirm("Are you sure you want to delete this custom report?")) return;
+
+  const reports = db.getCustomReports();
+  reports.splice(idx, 1);
+  db.saveCustomReports(reports);
+  
+  renderAdminReports();
+  showToast("Custom report deleted", "success");
+  triggerSync(true); // Sync deleted config to sheet
+}
+
+function cancelReportEdit() {
+  document.getElementById("reportTitle").value = "";
+  document.getElementById("reportDataset").value = "leads";
+  handleReportDatasetChange();
+
+  document.getElementById("editReportIndex").value = "";
+  document.getElementById("reportFormTitle").innerText = "Add Custom Report";
+  document.getElementById("cancelReportBtn").style.display = "none";
+}
+
 
 // Bind focus and visibilitychange events for instant tab-switching sync
 window.addEventListener("focus", triggerFocusSync);

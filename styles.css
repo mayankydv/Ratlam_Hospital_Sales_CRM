@@ -1097,6 +1097,7 @@ textarea.form-control {
   border-bottom: 2px solid var(--bg-app);
   margin-bottom: 20px;
   overflow-x: auto;
+  white-space: nowrap;
   gap: 16px;
 }
 
@@ -1328,4 +1329,16 @@ textarea.form-control {
 @keyframes zoomIn {
   from { transform: scale(0.95); opacity: 0; }
   to { transform: scale(1); opacity: 1; }
+}
+
+/* Timeframe Summary Grid Responsive Layout */
+.timeframe-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr) !important;
+}
+
+@media (max-width: 580px) {
+  .timeframe-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
 }
