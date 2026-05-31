@@ -6,7 +6,7 @@
 
 // Global Sheet Configuration
 const SHEET_SCHEMAS = {
-  Users: ["Name", "PIN", "Role", "Active"],
+  Users: ["ID", "Name", "PIN", "Role", "Active"],
   Leads: ["LeadID", "Organisation", "POC1Name", "POC1Phone", "POC1Specialization", "POC2Name", "POC2Phone", "POC2Specialization", "AudienceType", "Owner", "GPS", "Status", "Followup", "RevenuePotential", "NonConversionReason", "NonConversionAction", "CreatedAt", "UpdatedAt", "Archived", "CustomFields", "POC1", "POC2"],
   Meetings: ["MeetingID", "LeadID", "Purpose", "Notes", "Outcome", "Owner", "GPS", "Date", "Followup", "CreatedAt", "Archived", "Photo", "CustomFields"],
   Referrals: ["ReferralID", "LeadID", "PatientName", "PatientPhone", "VisitDate", "Reached", "OPD", "IPD", "Investigations", "Medicines", "Consultation", "ReceptionEnquiry", "AdmissionID", "Remarks", "Owner", "CreatedAt", "UpdatedAt", "Archived", "CustomFields"],
@@ -348,9 +348,9 @@ function seedInitialData(sheetName, sheet) {
   
   if (sheetName === "Users") {
     initialRows = [
-      ["Rahul", "1111", "Rep", true],
-      ["Mayank", "6842", "Manager", true],
-      ["Admin", "9999", "Admin", true]
+      ["Rahul", "Rahul", "1111", "Rep", true],
+      ["Mayank", "Mayank", "6842", "Manager", true],
+      ["Admin", "Admin", "9999", "Admin", true]
     ];
   } else if (sheetName === "Config") {
     initialRows = [

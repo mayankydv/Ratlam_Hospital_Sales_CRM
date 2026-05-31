@@ -191,23 +191,32 @@ class CRMDatabase {
     // If empty or missing basic users, restore DEFAULT_USERS
     if (users.length === 0) {
       users = [
-        { name: "Rahul", pin: "1111", role: "Rep", active: true },
-        { name: "Mayank", pin: "6842", role: "Manager", active: true },
-        { name: "Admin", pin: "9999", role: "Admin", active: true }
+        { id: "Rahul", name: "Rahul", pin: "1111", role: "Rep", active: true },
+        { id: "Mayank", name: "Mayank", pin: "6842", role: "Manager", active: true },
+        { id: "Admin", name: "Admin", pin: "9999", role: "Admin", active: true }
       ];
       this.set("users", users);
     }
     // Double check that the admin user exists in the list to prevent lockout
     if (!users.some(u => String(u.pin) === "9999")) {
-      users.push({ name: "Admin", pin: "9999", role: "Admin", active: true });
+      users.push({ id: "Admin", name: "Admin", pin: "9999", role: "Admin", active: true });
       this.set("users", users);
     }
-    return users.map(u => {
+    let updated = false;
+    const mapped = users.map(u => {
       if (u && u.pin !== undefined && u.pin !== null) {
         u.pin = String(u.pin);
       }
+      if (u && !u.id) {
+        u.id = u.name;
+        updated = true;
+      }
       return u;
     });
+    if (updated) {
+      this.set("users", mapped);
+    }
+    return mapped;
   }
   saveUsers(users) { this.set("users", users); }
 
@@ -499,7 +508,7 @@ function checkSession() {
   if (session) {
     const sessionUser = JSON.parse(session);
     const users = db.getUsers();
-    const dbUser = users.find(u => u.name === sessionUser.name);
+    const dbUser = users.find(u => u.id === sessionUser.id || u.name === sessionUser.name);
     
     // If the user was deleted or deactivated
     if (!dbUser || !dbUser.active) {
@@ -510,7 +519,16 @@ function checkSession() {
       return;
     }
     
-    currentUser = dbUser; // Sync with fresh database details (PIN or role changes)
+    // If the PIN has been changed
+    if (dbUser.pin !== sessionUser.pin) {
+      localStorage.removeItem("medtrack_session");
+      currentUser = null;
+      showToast("Your PIN has been changed. Please log in again with your new PIN.", "warning");
+      window.location.hash = "#/login";
+      return;
+    }
+    
+    currentUser = dbUser; // Sync with fresh database details (role changes, etc.)
     localStorage.setItem("medtrack_session", JSON.stringify(dbUser));
     
     // Update UI headers
@@ -645,13 +663,13 @@ function populateDashboardFilters() {
     const users = db.getUsers().filter(u => u.active);
     users.forEach(u => {
       const opt = document.createElement("option");
-      opt.value = u.name;
+      opt.value = u.id;
       opt.innerText = u.name;
       repSelect.appendChild(opt);
     });
   } else {
     const opt = document.createElement("option");
-    opt.value = currentUser.name;
+    opt.value = currentUser.id;
     opt.innerText = currentUser.name;
     repSelect.appendChild(opt);
   }
@@ -716,7 +734,7 @@ function renderDashboard() {
     selectedRep = repSelect.value || "All";
   }
   if (currentUser.role === "Rep") {
-    selectedRep = currentUser.name;
+    selectedRep = currentUser.id;
   }
 
   const repFilter = (item) => selectedRep === "All" ? true : item.owner === selectedRep;
@@ -787,7 +805,7 @@ function renderDashboard() {
         tr.innerHTML = `
           <td style="font-weight:600; color:var(--primary);">${lead.organisation}</td>
           <td>${lead.audienceType}</td>
-          <td>${lead.owner}</td>
+          <td>${getUserDisplayName(lead.owner)}</td>
           <td><span class="record-badge badge-${lead.status.toLowerCase().replace(" ", "-")}">${lead.status}</span></td>
           <td style="text-align:center;">${count}</td>
           <td style="text-align:right; font-weight:600;">₹${(lead.revenuePotential || 0).toLocaleString()}</td>
@@ -890,7 +908,7 @@ function renderRepRanking(allLeads) {
   const repStats = {};
   allLeads.forEach(lead => {
     if (!repStats[lead.owner]) {
-      repStats[lead.owner] = { name: lead.owner, conversions: 0, revenue: 0 };
+      repStats[lead.owner] = { name: getUserDisplayName(lead.owner), conversions: 0, revenue: 0 };
     }
     if (lead.status === "Converted") {
       repStats[lead.owner].conversions += 1;
@@ -1008,7 +1026,7 @@ function renderLeadsList() {
   const searchVal = document.getElementById("leadSearchInput").value.toLowerCase();
   
   // Reps can only view own leads
-  const ownerFilter = (item) => currentUser.role === "Rep" ? item.owner === currentUser.name : true;
+  const ownerFilter = (item) => currentUser.role === "Rep" ? item.owner === currentUser.id : true;
   
   // Render Filters chips dynamically
   renderLeadFilterChips(leads);
@@ -1023,7 +1041,7 @@ function renderLeadsList() {
       const cleanOrg = (lead.organisation || "").toLowerCase().replace(/\s+/g, "");
       const cleanPoc1 = (lead.poc1 || "").toLowerCase().replace(/\s+/g, "");
       const cleanPoc2 = (lead.poc2 || "").toLowerCase().replace(/\s+/g, "");
-      const cleanOwner = (lead.owner || "").toLowerCase().replace(/\s+/g, "");
+      const cleanOwner = (getUserDisplayName(lead.owner) || "").toLowerCase().replace(/\s+/g, "");
 
       const matchSearch = cleanOrg.includes(cleanSearchVal) || 
                           cleanPoc1.includes(cleanSearchVal) ||
@@ -1070,8 +1088,8 @@ function renderLeadsList() {
       </div>
       <div class="record-footer">
         <div class="record-owner">
-          <div class="record-owner-avatar">${lead.owner[0]}</div>
-          <span>${lead.owner}</span>
+          <div class="record-owner-avatar">${getUserDisplayName(lead.owner)[0] || "U"}</div>
+          <span>${getUserDisplayName(lead.owner)}</span>
         </div>
         <div class="record-time">
           Potential: ₹${(lead.revenuePotential || 0).toLocaleString()}
@@ -1110,7 +1128,7 @@ function toggleLeadFilterSheet() {
 function renderMeetingsList() {
   const meetings = db.getMeetings();
   const searchVal = document.getElementById("meetingSearchInput").value.toLowerCase();
-  const ownerFilter = (item) => currentUser.role === "Rep" ? item.owner === currentUser.name : true;
+  const ownerFilter = (item) => currentUser.role === "Rep" ? item.owner === currentUser.id : true;
 
   const container = document.getElementById("meetingsListContainer");
   container.innerHTML = "";
@@ -1125,7 +1143,7 @@ function renderMeetingsList() {
       const orgName = lead ? lead.organisation || "" : "";
       const cleanOrg = orgName.toLowerCase().replace(/\s+/g, "");
       const cleanPurpose = (meeting.purpose || "").toLowerCase().replace(/\s+/g, "");
-      const cleanOwner = (meeting.owner || "").toLowerCase().replace(/\s+/g, "");
+      const cleanOwner = (getUserDisplayName(meeting.owner) || "").toLowerCase().replace(/\s+/g, "");
       const cleanNotes = (meeting.notes || "").toLowerCase().replace(/\s+/g, "");
       return cleanOrg.includes(cleanSearchVal) || 
              cleanPurpose.includes(cleanSearchVal) ||
@@ -1162,8 +1180,8 @@ function renderMeetingsList() {
       </div>
       <div class="record-footer">
         <div class="record-owner">
-          <div class="record-owner-avatar">${meeting.owner[0]}</div>
-          <span>${meeting.owner}</span>
+          <div class="record-owner-avatar">${getUserDisplayName(meeting.owner)[0] || "U"}</div>
+          <span>${getUserDisplayName(meeting.owner)}</span>
         </div>
         <div class="record-time">
           ${meeting.date}
@@ -1499,7 +1517,7 @@ function submitLeadForm(e) {
     poc1,
     poc2,
     audienceType: document.getElementById("leadAudience").value,
-    owner: selectedLead ? selectedLead.owner : currentUser.name,
+    owner: selectedLead ? selectedLead.owner : currentUser.id,
     gps: document.getElementById("leadGps").value,
     status,
     followup: document.getElementById("leadFollowup").value,
@@ -1531,7 +1549,7 @@ function submitMeetingForm(e) {
     purpose: document.getElementById("meetingPurpose").value,
     notes: document.getElementById("meetingNotes").value,
     outcome: document.getElementById("meetingOutcome").value,
-    owner: currentUser.name,
+    owner: currentUser.id,
     gps: document.getElementById("meetingGps").value,
     date: document.getElementById("meetingDate").value,
     followup: document.getElementById("meetingFollowup").value,
@@ -1723,7 +1741,7 @@ function renderLeadDetail(id) {
   document.getElementById("detailStatus").className = `record-badge badge-${status.toLowerCase().replace(" ", "-")}`;
 
   document.getElementById("detailAudience").innerText = lead.audienceType || "-";
-  document.getElementById("detailOwner").innerText = lead.owner || "-";
+  document.getElementById("detailOwner").innerText = getUserDisplayName(lead.owner) || "-";
   
   // Display structured POC details
   document.getElementById("detailPoc1Name").innerText = lead.poc1Name || "-";
@@ -1816,7 +1834,7 @@ function renderLeadDetail(id) {
 
   // Edit controls display based on roles
   const editBtn = document.getElementById("leadDetailEditBtn");
-  if (currentUser.role === "Rep" && lead.owner !== currentUser.name) {
+  if (currentUser.role === "Rep" && lead.owner !== currentUser.id) {
     editBtn.style.display = "none";
   } else {
     editBtn.style.display = "block";
@@ -1862,7 +1880,7 @@ function renderMeetingDetail(id) {
   document.getElementById("detailMeetingOutcome").innerText = meeting.outcome;
   document.getElementById("detailMeetingGps").innerText = meeting.gps || "None Recorded";
   document.getElementById("detailMeetingNotes").innerText = meeting.notes;
-  document.getElementById("detailMeetingOwner").innerText = meeting.owner;
+  document.getElementById("detailMeetingOwner").innerText = getUserDisplayName(meeting.owner);
 
   // Custom Fields render
   const customList = document.getElementById("detailMeetingCustomFields");
@@ -1995,7 +2013,7 @@ function shareLeadAsImage() {
     ctx.fillText("REP AGENT OWNER", 50, leftY);
     ctx.fillStyle = "#ffffff";
     ctx.font = "600 17px sans-serif";
-    ctx.fillText(selectedLead.owner || "-", 50, leftY + 22);
+    ctx.fillText(getUserDisplayName(selectedLead.owner) || "-", 50, leftY + 22);
     leftY += 65;
   }
 
@@ -2071,7 +2089,7 @@ function shareLeadAsImage() {
     .replace(/{organisation}/g, selectedLead.organisation)
     .replace(/{poc1}/g, selectedLead.poc1 || "")
     .replace(/{status}/g, selectedLead.status || "")
-    .replace(/{owner}/g, selectedLead.owner || "")
+    .replace(/{owner}/g, getUserDisplayName(selectedLead.owner) || "")
     .replace(/{leadId}/g, selectedLead.leadId || "")
     .replace(/{link}/g, leadLink);
 
@@ -2132,7 +2150,7 @@ function renderReferralsList() {
   const leads = db.getLeads();
   const searchVal = (document.getElementById("referralsSearchInput")?.value || "").replace(/\s+/g, "").toLowerCase();
   
-  const ownerFilter = (r) => currentUser.role === "Rep" ? r.owner === currentUser.name : true;
+  const ownerFilter = (r) => currentUser.role === "Rep" ? r.owner === currentUser.id : true;
   const container = document.getElementById("referralsListContainer");
   if (!container) return;
   container.innerHTML = "";
@@ -2234,8 +2252,8 @@ function renderReferralsList() {
       </div>
       <div class="record-footer">
         <div class="record-owner">
-          <div class="record-owner-avatar">${r.owner[0]}</div>
-          <span>Logged by: ${r.owner}</span>
+          <div class="record-owner-avatar">${getUserDisplayName(r.owner)[0] || "U"}</div>
+          <span>Logged by: ${getUserDisplayName(r.owner)}</span>
         </div>
       </div>
     `;
@@ -2252,7 +2270,7 @@ function populateReferralFormForAdd() {
   if (!select) return;
   select.innerHTML = '<option value="">-- Select Hospital Lead --</option>';
   
-  const leads = db.getLeads().filter(l => currentUser.role === "Rep" ? l.owner === currentUser.name : true);
+  const leads = db.getLeads().filter(l => currentUser.role === "Rep" ? l.owner === currentUser.id : true);
   leads.forEach(l => {
     const opt = document.createElement("option");
     opt.value = l.leadId;
@@ -2305,7 +2323,7 @@ function submitReferralForm(e) {
     reached: "Pending",
     reachedDetails: null,
     admissionId: "",
-    owner: currentUser.name,
+    owner: currentUser.id,
     archived: false,
     customFields: customFieldsData
   };
@@ -2477,7 +2495,7 @@ function renderAdminUsers() {
         </span>
       </td>
       <td>
-        <button class="action-icon-btn" onclick="editUserPin(${idx})" title="Edit PIN" style="margin-right: 6px; color: var(--primary); background: none; border: none; cursor: pointer;">
+        <button class="action-icon-btn" onclick="editUser(${idx})" title="Edit User (Name/PIN)" style="margin-right: 6px; color: var(--primary); background: none; border: none; cursor: pointer;">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle;"><path d="M12 20h9"></path><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>
         </button>
         <button class="action-icon-btn delete" onclick="deleteUser(${idx})" title="Delete User">
@@ -2487,6 +2505,25 @@ function renderAdminUsers() {
     `;
     tbody.appendChild(tr);
   });
+
+  // Populate Lead Transfer Dropdowns
+  const fromSelect = document.getElementById("transferFromUser");
+  const toSelect = document.getElementById("transferToUser");
+  if (fromSelect && toSelect) {
+    const prevFrom = fromSelect.value;
+    const prevTo = toSelect.value;
+    
+    fromSelect.innerHTML = `<option value="">-- Select Source Rep --</option>`;
+    toSelect.innerHTML = `<option value="">-- Select Destination Rep --</option>`;
+    
+    users.forEach(u => {
+      fromSelect.innerHTML += `<option value="${u.id}">${u.name} (${u.role})</option>`;
+      toSelect.innerHTML += `<option value="${u.id}">${u.name} (${u.role})</option>`;
+    });
+    
+    fromSelect.value = prevFrom;
+    toSelect.value = prevTo;
+  }
 }
 
 function addNewUser(e) {
@@ -2506,7 +2543,7 @@ function addNewUser(e) {
     return;
   }
 
-  users.push({ name, pin, role, active: true });
+  users.push({ id: "U-" + Date.now(), name, pin, role, active: true });
   db.saveUsers(users);
   showToast("New user added successfully!", "success");
   
@@ -2537,21 +2574,118 @@ function deleteUser(idx) {
   }
 }
 
-function editUserPin(idx) {
+function editUser(idx) {
   const users = db.getUsers();
   const user = users[idx];
-  const newPin = prompt(`Enter new 4-digit PIN for ${user.name}:`, user.pin);
+  
+  const newName = prompt(`Enter new name for ${user.name}:`, user.name);
+  if (newName === null) return; // Cancelled
+  const trimmedName = newName.trim();
+  if (!trimmedName) {
+    showToast("Name cannot be empty.", "error");
+    return;
+  }
+  
+  // Check duplicate names (excluding self)
+  if (users.some((u, i) => i !== idx && u.name.toLowerCase() === trimmedName.toLowerCase())) {
+    showToast("Username already exists.", "error");
+    return;
+  }
+  
+  const newPin = prompt(`Enter new 4-digit PIN for ${trimmedName}:`, user.pin);
   if (newPin === null) return; // Cancelled
-  const trimmed = newPin.trim();
-  if (trimmed.length !== 4 || isNaN(trimmed)) {
+  const trimmedPin = newPin.trim();
+  if (trimmedPin.length !== 4 || isNaN(trimmedPin)) {
     showToast("Invalid PIN. Must be exactly 4 digits.", "error");
     return;
   }
-  user.pin = trimmed;
+  
+  user.name = trimmedName;
+  user.pin = trimmedPin;
+  
   db.saveUsers(users);
-  showToast(`PIN updated for ${user.name}`, "success");
+  showToast(`User updated successfully!`, "success");
+  
+  // If the active user updated their own details, update their session
+  if (currentUser && currentUser.id === user.id) {
+    currentUser = user;
+    localStorage.setItem("medtrack_session", JSON.stringify(user));
+    document.getElementById("currentUserLabel").innerText = `${currentUser.name} (${currentUser.role})`;
+  }
+  
   renderAdminUsers();
   triggerSync(true, true);
+}
+
+function transferUserLeads(e) {
+  e.preventDefault();
+  const fromUser = document.getElementById("transferFromUser").value;
+  const toUser = document.getElementById("transferToUser").value;
+  
+  if (!fromUser || !toUser) {
+    showToast("Please select both source and destination representatives.", "warning");
+    return;
+  }
+  if (fromUser === toUser) {
+    showToast("Source and destination representatives must be different.", "warning");
+    return;
+  }
+  
+  const leads = db.get("leads") || [];
+  const meetings = db.get("meetings") || [];
+  const referrals = db.get("referrals") || [];
+  
+  let leadsCount = 0;
+  let meetingsCount = 0;
+  let referralsCount = 0;
+  
+  leads.forEach(l => {
+    if (l.owner === fromUser) {
+      l.owner = toUser;
+      l.updatedAt = new Date().toISOString();
+      leadsCount++;
+    }
+  });
+  
+  meetings.forEach(m => {
+    if (m.owner === fromUser) {
+      m.owner = toUser;
+      meetingsCount++;
+    }
+  });
+  
+  referrals.forEach(r => {
+    if (r.owner === fromUser) {
+      r.owner = toUser;
+      r.updatedAt = new Date().toISOString();
+      referralsCount++;
+    }
+  });
+  
+  if (leadsCount === 0 && meetingsCount === 0 && referralsCount === 0) {
+    showToast(`No records found for the selected source representative to transfer.`, "info");
+    return;
+  }
+  
+  const fromName = getUserDisplayName(fromUser);
+  const toName = getUserDisplayName(toUser);
+  
+  if (confirm(`Are you sure you want to transfer ${leadsCount} leads, ${meetingsCount} meetings, and ${referralsCount} referrals from ${fromName} to ${toName}?`)) {
+    db.set("leads", leads);
+    db.set("meetings", meetings);
+    db.set("referrals", referrals);
+    
+    showToast(`Successfully transferred ${leadsCount} leads to ${toName}!`, "success");
+    
+    document.getElementById("transferFromUser").value = "";
+    document.getElementById("transferToUser").value = "";
+    
+    // Sync immediately
+    triggerSync(true);
+    
+    // Refresh admin view
+    renderAdminUsers();
+  }
 }
 
 // 2. Inline Options Management Helpers
@@ -3429,6 +3563,13 @@ async function triggerSync(isSilent = false, pushConfig = false) {
 }
 
 // --- UTILITIES ---
+function getUserDisplayName(ownerId) {
+  if (!ownerId) return "";
+  const users = db.getUsers();
+  const user = users.find(u => u.id === ownerId || u.name === ownerId);
+  return user ? user.name : ownerId;
+}
+
 function showToast(msg, type = "success") {
   const toast = document.getElementById("toastNotification");
   toast.innerText = msg;

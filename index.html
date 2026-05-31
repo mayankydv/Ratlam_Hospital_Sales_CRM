@@ -356,6 +356,25 @@
           <tbody id="adminUsersTableBody"></tbody>
         </table>
       </div>
+
+      <!-- Transfer Leads Section -->
+      <form class="glass" style="padding: 16px; border-radius: var(--radius-md); margin-top: 20px; display: flex; flex-direction: column; gap: 12px;" onsubmit="transferUserLeads(event)">
+        <h4 style="color: var(--primary);">Transfer Leads & Accounts</h4>
+        <p style="font-size: 0.8rem; color: var(--text-muted); line-height: 1.4; margin: 0;">
+          Transfer ownership of all leads, meetings, and referrals from one representative to another (e.g. when a rep leaves the organization).
+        </p>
+        <div class="form-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap:10px; align-items: flex-end;">
+          <div class="form-group" style="margin: 0;">
+            <label class="form-label" style="font-size: 0.75rem;">From Representative</label>
+            <select id="transferFromUser" class="form-control" required></select>
+          </div>
+          <div class="form-group" style="margin: 0;">
+            <label class="form-label" style="font-size: 0.75rem;">To Representative</label>
+            <select id="transferToUser" class="form-control" required></select>
+          </div>
+          <button type="submit" class="btn btn-primary" style="height: 40px; font-size: 0.85rem;">Transfer Now</button>
+        </div>
+      </form>
     </div>
 
     <!-- Tab 3: Dynamic Forms Settings (Unified Form Management) -->
