@@ -42,12 +42,13 @@ function doPost(e) {
     initializeSpreadsheet();
     
     const payload = JSON.parse(e.postData.contents);
+    const isNewClient = (payload.appVersion === "v25");
     
-    // Sync each table from payload
-    if (payload.users) syncUsers(payload.users);
-    if (payload.config) syncConfig(payload.config);
-    if (payload.formFields) syncFormFields(payload.formFields);
-    if (payload.standardFields) syncStandardFields(payload.standardFields);
+    // Sync each table from payload (Config/Users require new client to prevent rollback overrides)
+    if (payload.users && isNewClient) syncUsers(payload.users);
+    if (payload.config && isNewClient) syncConfig(payload.config);
+    if (payload.formFields && isNewClient) syncFormFields(payload.formFields);
+    if (payload.standardFields && isNewClient) syncStandardFields(payload.standardFields);
     if (payload.leads) syncLeads(payload.leads);
     if (payload.meetings) syncMeetings(payload.meetings);
     if (payload.referrals) syncReferrals(payload.referrals);

@@ -3316,6 +3316,7 @@ async function triggerSync(isSilent = false, pushConfig = false) {
 
   // Payload for post: sends data and optionally configurations
   const payload = {
+    appVersion: "v25",
     leads: db.get("leads"), // Include archived elements to trigger server-side archives
     meetings: db.get("meetings"),
     referrals: db.get("referrals")
@@ -3418,11 +3419,11 @@ function handleFabItemClick(action) {
 let autoSyncTimerId = null;
 
 function startAutoSyncTimer() {
-  // Sync every 30 seconds (30,000 ms)
-  const SYNC_INTERVAL = 30 * 1000;
+  // Sync every 15 seconds (15,000 ms)
+  const SYNC_INTERVAL = 15 * 1000;
   
-  // Randomize initial delay slightly (between 5s and 15s) so users don't sync at the exact same millisecond
-  const initialDelay = (5 + Math.random() * 10) * 1000;
+  // Randomize initial delay slightly (between 2s and 5s) so users don't sync at the exact same millisecond
+  const initialDelay = (2 + Math.random() * 3) * 1000;
   
   setTimeout(() => {
     attemptAutoSync();
