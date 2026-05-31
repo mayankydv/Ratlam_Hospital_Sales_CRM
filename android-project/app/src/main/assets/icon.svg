@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f4c61" />
+      <stop offset="100%" stop-color="#1b7a9c" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="100" fill="url(#grad)" />
+  <!-- Medical Cross -->
+  <path d="M256 120 v272 M120 256 h272" stroke="#ffffff" stroke-width="64" stroke-linecap="round" />
+  <!-- Accent heart checkmark -->
+  <path d="M220 256 l24 24 l48 -48" stroke="#10b981" stroke-width="20" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+</svg>
