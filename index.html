@@ -496,14 +496,8 @@
           Synchronize local records stored on your phone with the central Google Sheets database. If offline, changes queues are saved locally and will sync when internet connection is restored.
         </p>
 
-        <div class="form-group">
-          <label class="form-label">Google Apps Script Web App Deployment URL</label>
-          <input type="url" id="adminSyncUrlInput" class="form-control" placeholder="https://script.google.com/macros/s/.../exec">
-        </div>
-
         <div style="display: flex; gap: 12px;">
-          <button class="btn btn-secondary" style="flex:1;" onclick="saveSyncUrl()">Save URL Settings</button>
-          <button class="btn btn-primary" style="flex:1;" onclick="forceSync()">Force Database Sync Now</button>
+          <button class="btn btn-primary" style="flex:1; height: 40px;" onclick="forceSync()">Force Database Sync Now</button>
         </div>
 
         <div style="font-size: 0.8rem; border-top: 1px solid var(--card-border); padding-top:16px;">

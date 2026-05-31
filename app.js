@@ -3312,14 +3312,20 @@ function renderAdminForms() {
 // 4. Synchronization panel
 function renderAdminSync() {
   const settings = db.getSyncSettings();
-  document.getElementById("adminSyncUrlInput").value = settings.url;
+  const inputEl = document.getElementById("adminSyncUrlInput");
+  if (inputEl) {
+    inputEl.value = settings.url;
+  }
   document.getElementById("adminLastSyncDisplay").innerText = settings.lastSync;
 }
 
 function saveSyncUrl() {
-  const url = document.getElementById("adminSyncUrlInput").value.trim();
-  db.saveSyncSettings(url);
-  showToast("Sync URL Saved!", "success");
+  const inputEl = document.getElementById("adminSyncUrlInput");
+  if (inputEl) {
+    const url = inputEl.value.trim();
+    db.saveSyncSettings(url);
+    showToast("Sync URL Saved!", "success");
+  }
 }
 
 function forceSync() {
