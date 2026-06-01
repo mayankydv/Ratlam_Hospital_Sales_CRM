@@ -6,12 +6,12 @@
 
 // Global Sheet Configuration
 const SHEET_SCHEMAS = {
-  Users: ["ID", "Name", "PIN", "Role", "Active"],
+  Users: ["ID", "Name", "PIN", "Role", "Active", "Archived"],
   Leads: ["LeadID", "Organisation", "POC1Name", "POC1Phone", "POC1Specialization", "POC2Name", "POC2Phone", "POC2Specialization", "AudienceType", "Owner", "GPS", "Status", "Followup", "RevenuePotential", "NonConversionReason", "NonConversionAction", "CreatedAt", "UpdatedAt", "Archived", "CustomFields", "POC1", "POC2"],
   Meetings: ["MeetingID", "LeadID", "Purpose", "Notes", "Outcome", "Owner", "GPS", "Date", "Followup", "CreatedAt", "Archived", "Photo", "CustomFields"],
   Referrals: ["ReferralID", "LeadID", "PatientName", "PatientPhone", "VisitDate", "Reached", "OPD", "IPD", "Investigations", "Medicines", "Consultation", "ReceptionEnquiry", "AdmissionID", "Remarks", "Owner", "CreatedAt", "UpdatedAt", "Archived", "CustomFields"],
   Config: ["ConfigKey", "ConfigValue"],
-  FormFields: ["ID", "Label", "Type", "Mandatory", "Options", "Active", "Target"],
+  FormFields: ["ID", "Label", "Type", "Mandatory", "Options", "Active", "Target", "Archived"],
   StandardFields: ["ID", "Label", "Mandatory", "Target", "Active", "Type", "Options"]
 };
 
@@ -317,16 +317,69 @@ function syncReferrals(incomingReferrals) {
   overwriteSheet("Referrals", Object.values(referralsMap));
 }
 
-function syncUsers(users) {
-  overwriteSheet("Users", users);
+function syncUsers(incomingUsers) {
+  const existingUsers = readSheetData("Users");
+  const usersMap = {};
+  
+  existingUsers.forEach(u => {
+    const key = u.id || u.name;
+    if (key) usersMap[key] = u;
+  });
+  
+  incomingUsers.forEach(incoming => {
+    const key = incoming.id || incoming.name;
+    if (!key) return;
+    const existing = usersMap[key];
+    if (!existing) {
+      usersMap[key] = incoming;
+    } else {
+      usersMap[key] = { ...existing, ...incoming };
+    }
+  });
+  
+  overwriteSheet("Users", Object.values(usersMap));
 }
 
-function syncFormFields(fields) {
-  overwriteSheet("FormFields", fields);
+function syncFormFields(incomingFields) {
+  const existingFields = readSheetData("FormFields");
+  const fieldsMap = {};
+  
+  existingFields.forEach(f => {
+    if (f.id) fieldsMap[f.id] = f;
+  });
+  
+  incomingFields.forEach(incoming => {
+    if (!incoming.id) return;
+    const existing = fieldsMap[incoming.id];
+    if (!existing) {
+      fieldsMap[incoming.id] = incoming;
+    } else {
+      fieldsMap[incoming.id] = { ...existing, ...incoming };
+    }
+  });
+  
+  overwriteSheet("FormFields", Object.values(fieldsMap));
 }
 
-function syncStandardFields(fields) {
-  overwriteSheet("StandardFields", fields);
+function syncStandardFields(incomingFields) {
+  const existingFields = readSheetData("StandardFields");
+  const fieldsMap = {};
+  
+  existingFields.forEach(f => {
+    if (f.id) fieldsMap[f.id] = f;
+  });
+  
+  incomingFields.forEach(incoming => {
+    if (!incoming.id) return;
+    const existing = fieldsMap[incoming.id];
+    if (!existing) {
+      fieldsMap[incoming.id] = incoming;
+    } else {
+      fieldsMap[incoming.id] = { ...existing, ...incoming };
+    }
+  });
+  
+  overwriteSheet("StandardFields", Object.values(fieldsMap));
 }
 
 function syncConfig(configObj) {

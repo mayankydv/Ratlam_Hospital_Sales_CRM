@@ -216,10 +216,19 @@ class CRMDatabase {
     if (updated) {
       this.set("users", mapped);
     }
-    return mapped;
+    return mapped.filter(u => u && !u.archived);
   }
   saveUsers(users) {
-    this.set("users", users);
+    const fullUsers = this.get("users") || [];
+    users.forEach(u => {
+      const idx = fullUsers.findIndex(fu => fu.id === u.id || fu.name === u.name);
+      if (idx !== -1) {
+        fullUsers[idx] = { ...fullUsers[idx], ...u };
+      } else {
+        fullUsers.push(u);
+      }
+    });
+    this.set("users", fullUsers);
     localStorage.setItem("medtrack_pending_config_push", "true");
   }
 
@@ -247,9 +256,21 @@ class CRMDatabase {
     this.saveConfig(config);
   }
 
-  getFormFields() { return this.get("form_fields"); }
+  getFormFields() {
+    const fields = this.get("form_fields") || [];
+    return fields.filter(f => f && !f.archived);
+  }
   saveFormFields(fields) {
-    this.set("form_fields", fields);
+    const fullFields = this.get("form_fields") || [];
+    fields.forEach(f => {
+      const idx = fullFields.findIndex(ff => ff.id === f.id);
+      if (idx !== -1) {
+        fullFields[idx] = { ...fullFields[idx], ...f };
+      } else {
+        fullFields.push(f);
+      }
+    });
+    this.set("form_fields", fullFields);
     localStorage.setItem("medtrack_pending_config_push", "true");
   }
 
@@ -2598,9 +2619,11 @@ function toggleUserStatus(idx) {
 
 function deleteUser(idx) {
   const users = db.getUsers();
-  if (confirm(`Are you sure you want to delete user: ${users[idx].name}?`)) {
-    users.splice(idx, 1);
-    db.saveUsers(users);
+  const targetUser = users[idx];
+  if (confirm(`Are you sure you want to delete user: ${targetUser.name}?`)) {
+    targetUser.archived = true;
+    targetUser.active = false;
+    db.saveUsers([targetUser]);
     showToast("User deleted", "info");
     renderAdminUsers();
     triggerSync(true, true);
@@ -3204,9 +3227,11 @@ function toggleFormFieldActive(idx) {
 
 function deleteFormField(idx) {
   const fields = db.getFormFields();
-  if (confirm(`Are you sure you want to remove field: ${fields[idx].label}?`)) {
-    fields.splice(idx, 1);
-    db.saveFormFields(fields);
+  const targetField = fields[idx];
+  if (confirm(`Are you sure you want to remove field: ${targetField.label}?`)) {
+    targetField.archived = true;
+    targetField.active = false;
+    db.saveFormFields([targetField]);
     showToast("Dynamic field deleted", "info");
     renderAdminForms();
     triggerSync(true, true);
@@ -3558,15 +3583,29 @@ async function triggerSync(isSilent = false, pushConfig = false) {
         localStorage.setItem("medtrack_pending_config_push", "false");
       }
 
-      // Safe updates: Only overwrite local settings if serverData contains non-empty lists
+      // Safe updates: Merge local changes with server configurations to prevent deletions
       if (serverData.users && serverData.users.length > 0) {
-        db.set("users", serverData.users);
+        const localUsers = db.get("users") || [];
+        const mergedUsers = [...serverData.users];
+        localUsers.forEach(lu => {
+          if (!mergedUsers.some(su => (su.id && su.id === lu.id) || (su.name && lu.name && su.name.toLowerCase() === lu.name.toLowerCase()))) {
+            mergedUsers.push(lu);
+          }
+        });
+        db.set("users", mergedUsers);
       }
       if (serverData.config && Object.keys(serverData.config).length > 0) {
         db.set("config", serverData.config);
       }
       if (serverData.formFields && serverData.formFields.length > 0) {
-        db.set("form_fields", serverData.formFields);
+        const localFields = db.get("form_fields") || [];
+        const mergedFields = [...serverData.formFields];
+        localFields.forEach(lf => {
+          if (!mergedFields.some(sf => sf.id === lf.id)) {
+            mergedFields.push(lf);
+          }
+        });
+        db.set("form_fields", mergedFields);
       }
       if (serverData.standardFields && serverData.standardFields.length > 0) {
         const localStd = db.getStandardFields();
