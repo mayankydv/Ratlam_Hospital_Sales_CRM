@@ -218,10 +218,16 @@ class CRMDatabase {
     }
     return mapped;
   }
-  saveUsers(users) { this.set("users", users); }
+  saveUsers(users) {
+    this.set("users", users);
+    localStorage.setItem("medtrack_pending_config_push", "true");
+  }
 
   getConfig() { return JSON.parse(localStorage.getItem("medtrack_config")) || DEFAULT_CONFIG; }
-  saveConfig(config) { localStorage.setItem("medtrack_config", JSON.stringify(config)); }
+  saveConfig(config) {
+    localStorage.setItem("medtrack_config", JSON.stringify(config));
+    localStorage.setItem("medtrack_pending_config_push", "true");
+  }
 
   getCustomReports() {
     const config = this.getConfig();
@@ -242,7 +248,10 @@ class CRMDatabase {
   }
 
   getFormFields() { return this.get("form_fields"); }
-  saveFormFields(fields) { this.set("form_fields", fields); }
+  saveFormFields(fields) {
+    this.set("form_fields", fields);
+    localStorage.setItem("medtrack_pending_config_push", "true");
+  }
 
   getLeads() {
     const rawLeads = this.get("leads") || [];
@@ -339,6 +348,7 @@ class CRMDatabase {
 
   saveStandardFields(fields) {
     localStorage.setItem("medtrack_standard_fields", JSON.stringify(fields));
+    localStorage.setItem("medtrack_pending_config_push", "true");
   }
 
   clearCache() {
@@ -3515,6 +3525,9 @@ async function triggerSync(isSilent = false, pushConfig = false) {
   badge.innerText = "Syncing...";
   if (!isSilent) showToast("Initializing Sheet Sync...", "info");
 
+  const pendingPush = localStorage.getItem("medtrack_pending_config_push") === "true";
+  const shouldPushConfig = pushConfig || pendingPush;
+
   // Payload for post: sends data and optionally configurations
   const payload = {
     appVersion: "v25",
@@ -3523,7 +3536,7 @@ async function triggerSync(isSilent = false, pushConfig = false) {
     referrals: db.get("referrals")
   };
 
-  if (pushConfig) {
+  if (shouldPushConfig) {
     payload.users = db.getUsers();
     payload.config = db.getConfig();
     payload.formFields = db.getFormFields();
@@ -3541,16 +3554,27 @@ async function triggerSync(isSilent = false, pushConfig = false) {
     const serverData = await response.json();
 
     if (serverData && serverData.success) {
-      if (serverData.users) db.set("users", serverData.users);
-      if (serverData.config) db.set("config", serverData.config);
-      if (serverData.formFields) db.set("form_fields", serverData.formFields);
+      if (shouldPushConfig) {
+        localStorage.setItem("medtrack_pending_config_push", "false");
+      }
+
+      // Safe updates: Only overwrite local settings if serverData contains non-empty lists
+      if (serverData.users && serverData.users.length > 0) {
+        db.set("users", serverData.users);
+      }
+      if (serverData.config && Object.keys(serverData.config).length > 0) {
+        db.set("config", serverData.config);
+      }
+      if (serverData.formFields && serverData.formFields.length > 0) {
+        db.set("form_fields", serverData.formFields);
+      }
       if (serverData.standardFields && serverData.standardFields.length > 0) {
         const localStd = db.getStandardFields();
         const merged = localStd.map(lf => {
           const sf = serverData.standardFields.find(f => f.id === lf.id);
           return sf ? { ...lf, ...sf } : lf;
         });
-        db.saveStandardFields(merged);
+        localStorage.setItem("medtrack_standard_fields", JSON.stringify(merged));
       }
       if (serverData.leads) db.set("leads", serverData.leads);
       if (serverData.meetings) db.set("meetings", serverData.meetings);
