@@ -87,7 +87,7 @@ class MainActivity : Activity() {
         }
 
         setContentView(webView)
-        webView.loadUrl("file:///android_asset/index.html")
+        webView.loadUrl("https://mayankydv.github.io/Ratlam_Hospital_Sales_CRM/")
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
