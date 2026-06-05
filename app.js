@@ -67,6 +67,31 @@ function parseLegacyPoc(pocStr) {
   return { name, phone, specialization };
 }
 
+function formatSimpleDate(dateStr) {
+  if (!dateStr) return "";
+  let clean = String(dateStr).replace(/[\"\\]/g, "").trim();
+  clean = clean.split("T")[0];
+  const parts = clean.split("-");
+  if (parts.length !== 3) return clean;
+  
+  const year = parts[0];
+  const monthIndex = parseInt(parts[1], 10) - 1;
+  const day = parseInt(parts[2], 10);
+  
+  if (isNaN(monthIndex) || isNaN(day)) return clean;
+  
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const monthName = months[monthIndex] || "";
+  
+  let suffix = "th";
+  if (day === 1 || day === 21 || day === 31) suffix = "st";
+  else if (day === 2 || day === 22) suffix = "nd";
+  else if (day === 3 || day === 23) suffix = "rd";
+  
+  const shortYear = year.slice(-2);
+  return `${day}${suffix} ${monthName}'${shortYear}`;
+}
+
 // --- DATABASE HANDLER (LOCAL-FIRST) ---
 class CRMDatabase {
   constructor() {
@@ -1075,6 +1100,8 @@ let activeStatusFilter = "All";
 
 function renderLeadsList() {
   const leads = db.getLeads();
+  const meetings = db.getMeetings();
+  const referrals = db.getReferrals();
   const searchVal = document.getElementById("leadSearchInput").value.toLowerCase();
   
   // Reps can only view own leads
@@ -1123,6 +1150,16 @@ function renderLeadsList() {
     const displayName = (lead.poc1Name || lead.poc1 || "").split("(")[0].trim();
     const truncatedName = displayName.length > 25 ? displayName.substring(0, 22) + "..." : displayName;
 
+    const meetingCount = meetings.filter(m => m.leadId === lead.leadId).length;
+    const referralCount = referrals.filter(r => r.leadId === lead.leadId).length;
+    
+    const getCityFromGps = (gpsStr) => {
+      if (!gpsStr) return "";
+      const match = gpsStr.match(/\(([^)]+)\)/);
+      return match ? match[1] : "";
+    };
+    const city = getCityFromGps(lead.gps);
+
     card.innerHTML = `
       <div class="record-header">
         <div class="record-title">${lead.organisation || "Unnamed Organisation"}</div>
@@ -1135,16 +1172,23 @@ function renderLeadsList() {
         </div>
         <div class="record-detail-item">
           <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
-          <span>${lead.followup ? "Next: " + lead.followup : "No Followup"}</span>
+          <span>${lead.followup ? "Next: " + formatSimpleDate(lead.followup) : "No Followup"}</span>
         </div>
       </div>
-      <div class="record-footer">
-        <div class="record-owner">
-          <div class="record-owner-avatar">${getUserDisplayName(lead.owner)[0] || "U"}</div>
-          <span>${getUserDisplayName(lead.owner)}</span>
+      <div class="record-footer" style="flex-wrap: wrap; gap: 8px;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <div class="record-owner">
+            <div class="record-owner-avatar">${getUserDisplayName(lead.owner)[0] || "U"}</div>
+            <span>${getUserDisplayName(lead.owner)}</span>
+          </div>
+          <span style="font-size:0.75rem; color:var(--text-muted);">|</span>
+          <span style="font-size:0.75rem; font-weight:600; color:var(--warning);">Referrals: ${referralCount}</span>
+          ${city ? `
+          <span style="font-size:0.75rem; color:var(--text-muted);">|</span>
+          <span style="font-size:0.75rem; font-weight:500; color:var(--primary-light);">📍 ${city}</span>` : ''}
         </div>
-        <div class="record-time">
-          Potential: ₹${(lead.revenuePotential || 0).toLocaleString()}
+        <div class="record-time" style="font-weight: 600; color: var(--primary);">
+          Visits: ${meetingCount}
         </div>
       </div>
     `;
@@ -1267,10 +1311,18 @@ function populateLeadFormForAdd(defaultStatus = null) {
   document.getElementById("leadPoc2Name").value = "";
   document.getElementById("leadPoc2Phone").value = "";
   document.getElementById("leadPoc2Specialization").value = "";
+  document.getElementById("leadPoc3Name").value = "";
+  document.getElementById("leadPoc3Phone").value = "";
+  document.getElementById("leadPoc3Specialization").value = "";
   document.getElementById("leadRevenue").value = "";
   document.getElementById("leadFollowup").value = "";
   document.getElementById("leadGps").value = "";
   document.getElementById("leadGpsCoordsDisplay").innerText = "Tap button below to capture";
+  
+  // Show only POC 1 by default on add form
+  document.getElementById("leadPoc2").style.display = "none";
+  document.getElementById("leadPoc3").style.display = "none";
+  document.getElementById("addMoreContactContainer").style.display = "block";
   
   // Populate dropdowns from dynamic configuration
   populateDropdown("leadAudience", db.getConfig().audienceTypes);
@@ -1313,10 +1365,33 @@ function populateLeadFormForEdit(lead) {
   document.getElementById("leadPoc2Name").value = lead.poc2Name || "";
   document.getElementById("leadPoc2Phone").value = lead.poc2Phone || "";
   document.getElementById("leadPoc2Specialization").value = lead.poc2Specialization || "";
+  
+  document.getElementById("leadPoc3Name").value = lead.customFields?.poc3Name || "";
+  document.getElementById("leadPoc3Phone").value = lead.customFields?.poc3Phone || "";
+  document.getElementById("leadPoc3Specialization").value = lead.customFields?.poc3Specialization || "";
+
   document.getElementById("leadRevenue").value = lead.revenuePotential;
   document.getElementById("leadFollowup").value = lead.followup || "";
   document.getElementById("leadGps").value = lead.gps || "";
   document.getElementById("leadGpsCoordsDisplay").innerText = lead.gps ? `Captured: ${lead.gps}` : "Coordinates not captured";
+
+  // Handle show/hide of contacts depending on if data exists
+  const hasPoc2 = lead.poc2Name || lead.poc2Phone || lead.poc2Specialization;
+  const hasPoc3 = lead.customFields?.poc3Name || lead.customFields?.poc3Phone || lead.customFields?.poc3Specialization;
+
+  if (hasPoc3) {
+    document.getElementById("leadPoc2").style.display = "block";
+    document.getElementById("leadPoc3").style.display = "block";
+    document.getElementById("addMoreContactContainer").style.display = "none";
+  } else if (hasPoc2) {
+    document.getElementById("leadPoc2").style.display = "block";
+    document.getElementById("leadPoc3").style.display = "none";
+    document.getElementById("addMoreContactContainer").style.display = "block";
+  } else {
+    document.getElementById("leadPoc2").style.display = "none";
+    document.getElementById("leadPoc3").style.display = "none";
+    document.getElementById("addMoreContactContainer").style.display = "block";
+  }
 
   populateDropdown("leadAudience", db.getConfig().audienceTypes);
   document.getElementById("leadAudience").value = lead.audienceType;
@@ -1349,6 +1424,19 @@ function populateLeadFormForEdit(lead) {
       }
     }
   });
+}
+
+function addMoreContact() {
+  const poc2 = document.getElementById("leadPoc2");
+  const poc3 = document.getElementById("leadPoc3");
+  const btnContainer = document.getElementById("addMoreContactContainer");
+  
+  if (poc2.style.display === "none" || !poc2.style.display) {
+    poc2.style.display = "block";
+  } else if (poc3.style.display === "none" || !poc3.style.display) {
+    poc3.style.display = "block";
+    btnContainer.style.display = "none";
+  }
 }
 
 function populateMeetingForm(preselectedLeadId = null) {
@@ -1538,9 +1626,14 @@ function submitLeadForm(e) {
   const poc2Phone = document.getElementById("leadPoc2Phone").value.trim();
   const poc2Specialization = document.getElementById("leadPoc2Specialization").value.trim();
 
-  // Combine into poc1/poc2 strings for backward compatibility
+  const poc3Name = document.getElementById("leadPoc3Name") ? document.getElementById("leadPoc3Name").value.trim() : "";
+  const poc3Phone = document.getElementById("leadPoc3Phone") ? document.getElementById("leadPoc3Phone").value.trim() : "";
+  const poc3Specialization = document.getElementById("leadPoc3Specialization") ? document.getElementById("leadPoc3Specialization").value.trim() : "";
+
+  // Combine into poc1/poc2/poc3 strings for backward compatibility
   const poc1 = poc1Name + (poc1Phone ? ` (${poc1Phone})` : "") + (poc1Specialization ? ` - ${poc1Specialization}` : "");
   const poc2 = poc2Name + (poc2Phone ? ` (${poc2Phone})` : "") + (poc2Specialization ? ` - ${poc2Specialization}` : "");
+  const poc3 = poc3Name + (poc3Phone ? ` (${poc3Phone})` : "") + (poc3Specialization ? ` - ${poc3Specialization}` : "");
 
   const leadId = selectedLead ? selectedLead.leadId : "L-" + Math.floor(Math.random() * 9000 + 1000);
   const status = document.getElementById("leadStatus").value;
@@ -1556,6 +1649,12 @@ function submitLeadForm(e) {
     action: actionText
   });
   customFieldsData.edits = edits;
+
+  // Store POC 3 inside custom fields data
+  customFieldsData.poc3Name = poc3Name;
+  customFieldsData.poc3Phone = poc3Phone;
+  customFieldsData.poc3Specialization = poc3Specialization;
+  customFieldsData.poc3 = poc3;
 
   const leadData = {
     leadId,
@@ -1800,9 +1899,34 @@ function renderLeadDetail(id) {
   document.getElementById("detailPoc1Phone").innerText = lead.poc1Phone || "-";
   document.getElementById("detailPoc1Spec").innerText = lead.poc1Specialization || "-";
   
-  document.getElementById("detailPoc2Name").innerText = lead.poc2Name || "-";
-  document.getElementById("detailPoc2Phone").innerText = lead.poc2Phone || "-";
-  document.getElementById("detailPoc2Spec").innerText = lead.poc2Specialization || "-";
+  const hasPoc2 = lead.poc2Name || lead.poc2Phone || lead.poc2Specialization;
+  const wrapper2 = document.getElementById("detailPoc2Wrapper");
+  if (wrapper2) {
+    if (hasPoc2) {
+      wrapper2.style.display = "";
+      document.getElementById("detailPoc2Name").innerText = lead.poc2Name || "-";
+      document.getElementById("detailPoc2Phone").innerText = lead.poc2Phone || "-";
+      document.getElementById("detailPoc2Spec").innerText = lead.poc2Specialization || "-";
+    } else {
+      wrapper2.style.display = "none";
+    }
+  }
+
+  const poc3Name = lead.customFields?.poc3Name || "";
+  const poc3Phone = lead.customFields?.poc3Phone || "";
+  const poc3Spec = lead.customFields?.poc3Specialization || "";
+  const hasPoc3 = poc3Name || poc3Phone || poc3Spec;
+  const wrapper3 = document.getElementById("detailPoc3Wrapper");
+  if (wrapper3) {
+    if (hasPoc3) {
+      wrapper3.style.display = "";
+      document.getElementById("detailPoc3Name").innerText = poc3Name || "-";
+      document.getElementById("detailPoc3Phone").innerText = poc3Phone || "-";
+      document.getElementById("detailPoc3Spec").innerText = poc3Spec || "-";
+    } else {
+      wrapper3.style.display = "none";
+    }
+  }
 
   document.getElementById("detailGps").innerText = lead.gps || "None Captured";
   document.getElementById("detailFollowup").innerText = lead.followup || "None Scheduled";
